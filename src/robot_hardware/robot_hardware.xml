@@ -1,0 +1,9 @@
+<library path="robot_hardware">
+  <class name="robot_hardware/HoverboardDriver"
+         type="robot_hardware::HoverboardDriver"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      ros2_control hardware interface.
+    </description>
+  </class>
+</library>
