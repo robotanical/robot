@@ -1,4 +1,5 @@
-// Copyright (c) 2022, Stogl Robotics Consulting UG (haftungsbeschränkt) (template)
+// Copyright (c) 2022, Stogl Robotics Consulting UG (haftungsbeschränkt)
+// (template)
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,82 +13,167 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <limits>
-#include <vector>
-
 #include "robot_hardware/hoverboard_driver.hpp"
-#include "hardware_interface/types/hardware_interface_type_values.hpp"
-#include "rclcpp/rclcpp.hpp"
 
-namespace robot_hardware
-{
+namespace robot_hardware {
 hardware_interface::CallbackReturn HoverboardDriver::on_init(
-  const hardware_interface::HardwareInfo & info)
-{
-  if (hardware_interface::SystemInterface::on_init(info) != CallbackReturn::SUCCESS) {
-    return CallbackReturn::ERROR;
+    const hardware_interface::HardwareInfo& info) {
+  {
+    if (hardware_interface::SystemInterface::on_init(info) !=
+        hardware_interface::CallbackReturn::SUCCESS) {
+      return hardware_interface::CallbackReturn::ERROR;
+    }
+
+    base_x_ = 0.0;
+    base_y_ = 0.0;
+    base_theta_ = 0.0;
+    port_name_ = std::stod(info_.hardware_parameters["serial_port_name"]);
+
+    hw_positions_.resize(info_.joints.size(),
+                         std::numeric_limits<double>::quiet_NaN());
+    hw_velocities_.resize(info_.joints.size(),
+                          std::numeric_limits<double>::quiet_NaN());
+    hw_commands_.resize(info_.joints.size(),
+                        std::numeric_limits<double>::quiet_NaN());
+
+    for (const hardware_interface::ComponentInfo& joint : info_.joints) {
+      if (joint.command_interfaces.size() != 1) {
+        RCLCPP_FATAL(rclcpp::get_logger("HoverboardDriver"),
+                     "Joint '%s' has %zu command interfaces found. 1 expected.",
+                     joint.name.c_str(), joint.command_interfaces.size());
+        return hardware_interface::CallbackReturn::ERROR;
+      }
+
+      if (joint.command_interfaces[0].name !=
+          hardware_interface::HW_IF_VELOCITY) {
+        RCLCPP_FATAL(
+            rclcpp::get_logger("HoverboardDriver"),
+            "Joint '%s' have %s command interfaces found. '%s' expected.",
+            joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
+            hardware_interface::HW_IF_VELOCITY);
+        return hardware_interface::CallbackReturn::ERROR;
+      }
+
+      if (joint.state_interfaces.size() != 2) {
+        RCLCPP_FATAL(rclcpp::get_logger("HoverboardDriver"),
+                     "Joint '%s' has %zu state interface. 2 expected.",
+                     joint.name.c_str(), joint.state_interfaces.size());
+        return hardware_interface::CallbackReturn::ERROR;
+      }
+
+      if (joint.state_interfaces[0].name !=
+          hardware_interface::HW_IF_POSITION) {
+        RCLCPP_FATAL(
+            rclcpp::get_logger("HoverboardDriver"),
+            "Joint '%s' have '%s' as first state interface. '%s' expected.",
+            joint.name.c_str(), joint.state_interfaces[0].name.c_str(),
+            hardware_interface::HW_IF_POSITION);
+        return hardware_interface::CallbackReturn::ERROR;
+      }
+
+      if (joint.state_interfaces[1].name !=
+          hardware_interface::HW_IF_VELOCITY) {
+        RCLCPP_FATAL(
+            rclcpp::get_logger("HoverboardDriver"),
+            "Joint '%s' have '%s' as second state interface. '%s' expected.",
+            joint.name.c_str(), joint.state_interfaces[1].name.c_str(),
+            hardware_interface::HW_IF_VELOCITY);
+        return hardware_interface::CallbackReturn::ERROR;
+      }
+    }
   }
-
-  // TODO(anyone): read parameters and initialize the hardware
-  hw_states_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-  hw_commands_.resize(info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-
-  return CallbackReturn::SUCCESS;
+  return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-std::vector<hardware_interface::StateInterface> HoverboardDriver::export_state_interfaces()
-{
+std::vector<hardware_interface::StateInterface>
+HoverboardDriver::export_state_interfaces() {
   std::vector<hardware_interface::StateInterface> state_interfaces;
-  for (size_t i = 0; i < info_.joints.size(); ++i) {
+  for (auto i = 0u; i < info_.joints.size(); ++i) {
     state_interfaces.emplace_back(hardware_interface::StateInterface(
-      // TODO(anyone): insert correct interfaces
-      info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_states_[i]));
+        info_.joints[i].name, hardware_interface::HW_IF_POSITION,
+        &hw_positions_[i]));
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        info_.joints[i].name, hardware_interface::HW_IF_VELOCITY,
+        &hw_velocities_[i]));
   }
 
   return state_interfaces;
 }
 
-std::vector<hardware_interface::CommandInterface> HoverboardDriver::export_command_interfaces()
-{
+std::vector<hardware_interface::CommandInterface>
+HoverboardDriver::export_command_interfaces() {
   std::vector<hardware_interface::CommandInterface> command_interfaces;
-  for (size_t i = 0; i < info_.joints.size(); ++i) {
+  for (auto i = 0u; i < info_.joints.size(); i++) {
     command_interfaces.emplace_back(hardware_interface::CommandInterface(
-      // TODO(anyone): insert correct interfaces
-      info_.joints[i].name, hardware_interface::HW_IF_POSITION, &hw_commands_[i]));
+        info_.joints[i].name, hardware_interface::HW_IF_VELOCITY,
+        &hw_commands_[i]));
   }
 
   return command_interfaces;
 }
 
 hardware_interface::CallbackReturn HoverboardDriver::on_activate(
-  const rclcpp_lifecycle::State & /*previous_state*/)
-{
-  // TODO(anyone): prepare the robot to receive commands
+    const rclcpp_lifecycle::State& /*previous_state*/) {
+  if ((port_fd_ = open(port_name_.c_str(), O_RDWR | O_NOCTTY | O_NDELAY)) < 0) {
+    RCLCPP_FATAL(rclcpp::get_logger("HoverboardDriver"),
+                 "Opening serial port %s failed: %d", port_name_.c_str(),
+                 port_fd_);
+    return CallbackReturn::ERROR;
+  }
+  struct termios options;
+  tcgetattr(port_fd_, &options);
+  options.c_cflag = B115200 | CS8 | CLOCAL | CREAD;
+  options.c_iflag = IGNPAR;
+  options.c_oflag = 0;
+  options.c_lflag = 0;
+  tcflush(port_fd_, TCIFLUSH);
+  tcsetattr(port_fd_, TCSANOW, &options);
+  for (auto i = 0u; i < hw_positions_.size(); i++) {
+    if (std::isnan(hw_positions_[i])) {
+      hw_positions_[i] = 0;
+      hw_velocities_[i] = 0;
+      hw_commands_[i] = 0;
+    }
+  }
 
+  RCLCPP_INFO(rclcpp::get_logger("HoverboardDriver"),
+              "Successfully activated!");
   return CallbackReturn::SUCCESS;
 }
 
 hardware_interface::CallbackReturn HoverboardDriver::on_deactivate(
-  const rclcpp_lifecycle::State & /*previous_state*/)
-{
-  // TODO(anyone): prepare the robot to stop receiving commands
+    const rclcpp_lifecycle::State& /*previous_state*/) {
+  if (port_fd_ != -1) close(port_fd_);
+  RCLCPP_INFO(rclcpp::get_logger("HoverboardDriver"),
+              "Successfully deactivated!");
 
   return CallbackReturn::SUCCESS;
 }
 
 hardware_interface::return_type HoverboardDriver::read(
-  const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
-{
-  // TODO(anyone): read robot states
+    const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/) {
+  if (port_fd_ != -1) {
+    unsigned char c;
+    int i = 0, r = 0;
 
+    while ((r = ::read(port_fd_, &c, 1)) > 0 && i++ < 1024) protocol_recv_(c);
+
+    if (r < 0 && errno != EAGAIN) {
+      RCLCPP_WARN(rclcpp::get_logger("HoverboardDriver"),
+                  "Reading from serial %s failed: %d", port_name_.c_str(), r);
+      return hardware_interface::return_type::ERROR;
+    }
+  }
   return hardware_interface::return_type::OK;
 }
 
 hardware_interface::return_type HoverboardDriver::write(
-  const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
-{
-  // TODO(anyone): write robot's commands'
-
+    const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/) {
+  if (port_fd_ == -1) {
+    RCLCPP_ERROR(rclcpp::get_logger("HoverboardDriver"),
+                 "Writing to serial %s failed", port_name_.c_str());
+    return hardware_interface::return_type::ERROR;
+  }
   return hardware_interface::return_type::OK;
 }
 
@@ -95,5 +181,5 @@ hardware_interface::return_type HoverboardDriver::write(
 
 #include "pluginlib/class_list_macros.hpp"
 
-PLUGINLIB_EXPORT_CLASS(
-  robot_hardware::HoverboardDriver, hardware_interface::SystemInterface)
+PLUGINLIB_EXPORT_CLASS(robot_hardware::HoverboardDriver,
+                       hardware_interface::SystemInterface)
