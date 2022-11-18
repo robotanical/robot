@@ -240,7 +240,7 @@
 
       <!-- output -->
       <publish_odom>true</publish_odom>
-      <publish_odom_tf>false</publish_odom_tf>
+      <publish_odom_tf>true</publish_odom_tf>
       <publish_wheel_tf>true</publish_wheel_tf>
 
       <odometry_frame>odom</odometry_frame>
@@ -310,5 +310,20 @@
       </plugin>
     </sensor>
   </gazebo>
+  <ros2_control name="robot" type="system">
+      <hardware>
+        <plugin>robot_hardware/HoverboardDriver</plugin>
+      </hardware>
+      <joint name="drivewhl_l_joint">
+        <command_interface name="velocity"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="drivewhl_l_joint">
+        <command_interface name="velocity"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+    </ros2_control>
   
 </robot>

@@ -19,6 +19,9 @@
 #include <fcntl.h>
 #include <termios.h>
 
+#include <cmath>
+#include <cstring>
+#include <iostream>
 #include <limits>
 #include <string>
 #include <vector>
@@ -99,8 +102,7 @@ class HoverboardDriver : public hardware_interface::SystemInterface {
   SerialFeedback msg_, previous_msg_;
   int port_fd_;
   char* p;
-  double hw_start_sec_;
-  double hw_stop_sec_;
+
   std::string port_name_;
   double last_read_;
   // Store the command for the simulated robot

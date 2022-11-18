@@ -4,10 +4,13 @@ import launch_ros
 import os
 
 def generate_launch_description():
-    pkg_share = launch_ros.substitutions.FindPackageShare(package='robot_description').find('robot_description')
-    default_model_path = os.path.join(pkg_share, 'src/description/robot_description.urdf')
+    pkg_share = launch_ros.substitutions.FindPackageShare(package='robot_bringup').find('robot_bringup')
+    dscrptn_share = launch_ros.substitutions.FindPackageShare(package='robot_description').find('robot_description')
+
+    default_model_path = os.path.join(dscrptn_share, 'src/description/robot_description.urdf')
     default_rviz_config_path = os.path.join(pkg_share, 'rviz/urdf_config.rviz')
-    world_path=os.path.join(pkg_share, 'world/my_world.sdf')
+    world_path=os.path.join(dscrptn_share, 'world/my_world.sdf')
+
     
     robot_state_publisher_node = launch_ros.actions.Node(
         package='robot_state_publisher',
