@@ -103,7 +103,7 @@ class HoverboardDriver : public hardware_interface::SystemInterface {
   int port_fd_;
   char* p;
 
-  std::string port_name_;
+  std::string port_name_ = "/dev/ttyUSB1";
   double last_read_;
   // Store the command for the simulated robot
   std::vector<double> hw_commands_;
@@ -112,6 +112,10 @@ class HoverboardDriver : public hardware_interface::SystemInterface {
 
   // Store the wheeled robot position
   double base_x_, base_y_, base_theta_;
+  int msg_len;
+      uint16_t start_frame = 0;
+    char prev_byte = 0;
+
 };
 
 }  // namespace robot_hardware

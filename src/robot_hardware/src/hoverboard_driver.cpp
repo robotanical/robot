@@ -14,6 +14,7 @@
 // limitations under the License.
 
 #include "robot_hardware/hoverboard_driver.hpp"
+#define START_FRAME 0xABCD
 
 namespace robot_hardware {
 hardware_interface::CallbackReturn HoverboardDriver::on_init(
@@ -24,7 +25,6 @@ hardware_interface::CallbackReturn HoverboardDriver::on_init(
       return hardware_interface::CallbackReturn::ERROR;
     }
 
-    port_name_ = info_.hardware_parameters["serial_port_name"];
 
     hw_positions_.resize(info_.joints.size(),
                          std::numeric_limits<double>::quiet_NaN());
@@ -36,27 +36,19 @@ hardware_interface::CallbackReturn HoverboardDriver::on_init(
     for (const hardware_interface::ComponentInfo& joint : info_.joints) {
       if (joint.command_interfaces.size() != 1) {
         RCLCPP_FATAL(rclcpp::get_logger("HoverboardDriver"),
-                     "Joint '%s' has %zu command interfaces found. 1 expected.",
+                     "Joint '%s' has %zu command interfaces found. 2 expected.",
                      joint.name.c_str(), joint.command_interfaces.size());
         return hardware_interface::CallbackReturn::ERROR;
       }
 
-      // if (joint.command_interfaces[0].name != "drivewhl_l_joint") {
-      //   RCLCPP_FATAL(
-      //       rclcpp::get_logger("HoverboardDriver"),
-      //       "Joint '%s' have %s command interfaces found. '%s' expected.",
-      //       joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
-      //       "drivewhl_l_joint");
-      //   return hardware_interface::CallbackReturn::ERROR;
-      // }
-      // if (joint.command_interfaces[1].name != "drivewhl_r_joint") {
-      //   RCLCPP_FATAL(
-      //       rclcpp::get_logger("HoverboardDriver"),
-      //       "Joint '%s' have %s command interfaces found. '%s' expected.",
-      //       joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
-      //       "drivewhl_l_joint");
-      //   return hardware_interface::CallbackReturn::ERROR;
-      // }
+      if (joint.command_interfaces[0].name != hardware_interface::HW_IF_VELOCITY) {
+        RCLCPP_FATAL(
+            rclcpp::get_logger("HoverboardDriver"),
+            "Joint '%s' have %s command interfaces found. '%s' expected.",
+            joint.name.c_str(), joint.command_interfaces[0].name.c_str(),
+            "drivewhl_l_joint");
+        return hardware_interface::CallbackReturn::ERROR;
+      }
 
       if (joint.state_interfaces.size() != 2) {
         RCLCPP_FATAL(rclcpp::get_logger("HoverboardDriver"),
@@ -65,25 +57,25 @@ hardware_interface::CallbackReturn HoverboardDriver::on_init(
         return hardware_interface::CallbackReturn::ERROR;
       }
 
-      // if (joint.state_interfaces[0].name !=
-      //     hardware_interface::HW_IF_POSITION) {
-      //   RCLCPP_FATAL(
-      //       rclcpp::get_logger("HoverboardDriver"),
-      //       "Joint '%s' have '%s' as first state interface. '%s' expected.",
-      //       joint.name.c_str(), joint.state_interfaces[0].name.c_str(),
-      //       hardware_interface::HW_IF_POSITION);
-      //   return hardware_interface::CallbackReturn::ERROR;
-      // }
+      if (joint.state_interfaces[0].name !=
+          hardware_interface::HW_IF_POSITION) {
+        RCLCPP_FATAL(
+            rclcpp::get_logger("HoverboardDriver"),
+            "Joint '%s' have '%s' as first state interface. '%s' expected.",
+            joint.name.c_str(), joint.state_interfaces[0].name.c_str(),
+            hardware_interface::HW_IF_POSITION);
+        return hardware_interface::CallbackReturn::ERROR;
+      }
 
-      // if (joint.state_interfaces[1].name !=
-      //     hardware_interface::HW_IF_VELOCITY) {
-      //   RCLCPP_FATAL(
-      //       rclcpp::get_logger("HoverboardDriver"),
-      //       "Joint '%s' have '%s' as second state interface. '%s' expected.",
-      //       joint.name.c_str(), joint.state_interfaces[1].name.c_str(),
-      //       hardware_interface::HW_IF_VELOCITY);
-      //   return hardware_interface::CallbackReturn::ERROR;
-      // }
+      if (joint.state_interfaces[1].name !=
+          hardware_interface::HW_IF_VELOCITY) {
+        RCLCPP_FATAL(
+            rclcpp::get_logger("HoverboardDriver"),
+            "Joint '%s' have '%s' as second state interface. '%s' expected.",
+            joint.name.c_str(), joint.state_interfaces[1].name.c_str(),
+            hardware_interface::HW_IF_VELOCITY);
+        return hardware_interface::CallbackReturn::ERROR;
+      }
     }
   }
   return hardware_interface::CallbackReturn::SUCCESS;
@@ -131,7 +123,13 @@ hardware_interface::CallbackReturn HoverboardDriver::on_activate(
   options.c_oflag = 0;
   options.c_lflag = 0;
   tcflush(port_fd_, TCIFLUSH);
-  tcsetattr(port_fd_, TCSANOW, &options);
+  if (tcsetattr(port_fd_, TCSANOW, &options) <= -1)
+  {
+    RCLCPP_FATAL(rclcpp::get_logger("HoverboardDriver"),
+                 "Setting attributes on port %s failed: %d", port_name_.c_str(),
+                 port_fd_);
+    return CallbackReturn::ERROR;
+  }
   for (auto i = 0u; i < hw_positions_.size(); i++) {
     if (std::isnan(hw_positions_[i])) {
       hw_positions_[i] = 0;
@@ -139,6 +137,25 @@ hardware_interface::CallbackReturn HoverboardDriver::on_activate(
       hw_commands_[i] = 0;
     }
   }
+    SerialCommand command;
+    command.start = (uint16_t)START_FRAME;
+    command.steer = (int16_t)0;
+    command.speed = (int16_t)0;
+    command.checksum = (uint16_t)(command.start ^ command.steer ^ command.speed);
+
+    int rc = ::write(port_fd_, (const void*)&command, sizeof(command));
+    if (rc < 0) {
+        RCLCPP_FATAL(rclcpp::get_logger("HoverboardDriver"),
+              "Failed to activate! Cannot write to port %s!", port_name_.c_str());
+              return CallbackReturn::ERROR;
+    }
+    int i=0;
+    unsigned char c;
+    int r=0;
+  
+    while ((r = ::read(port_fd_, &c, 1)) > 0 && i++ < 1024) protocol_recv_(c);
+
+
 
   RCLCPP_INFO(rclcpp::get_logger("HoverboardDriver"),
               "Successfully activated!");
@@ -182,49 +199,51 @@ hardware_interface::return_type HoverboardDriver::write(
 }
 
 void HoverboardDriver::protocol_recv_(char byte) {
-  // start_frame = ((uint16_t)(byte) << 8) | (uint8_t)prev_byte;
+  start_frame = ((uint16_t)(byte) << 8) | (uint8_t)prev_byte;
 
-  //   // Read the start frame
-  //   if (start_frame == START_FRAME) {
-  // p = (char*)&msg;
-  //     *p++ = prev_byte;
-  //     *p++ = byte;
-  //     msg_len = 2;
-  //   } else if (msg_len >= 2 && msg_len < sizeof(SerialFeedback)) {
-  //     // Otherwise just read the message content until the end
-  //     *p++ = byte;
-  //     msg_len++;
-  //   }
+    // Read the start frame
+    if (start_frame == START_FRAME) {
+  p = (char*)&msg_;
+      *p++ = prev_byte;
+      *p++ = byte;
+      msg_len = 2;
+    } else if (msg_len >= 2 && msg_len < sizeof(SerialFeedback)) {
+      // Otherwise just read the message content until the end
+      *p++ = byte;
+      msg_len++;
+    }
 
-  //   if (msg_len == sizeof(SerialFeedback)) {
-  //     uint16_t checksum =
-  //         (uint16_t)(msg.start ^ msg.cmd1 ^ msg.cmd2 ^ msg.speedR_meas ^
-  //                    msg.speedL_meas ^ msg.wheelR_cnt ^ msg.wheelL_cnt ^
-  //                    msg.batVoltage ^ msg.boardTemp ^ msg.cmdLed);
+    if (msg_len == sizeof(SerialFeedback)) {
+      uint16_t checksum =
+          (uint16_t)(msg_.start ^ msg_.cmd1 ^ msg_.cmd2 ^ msg_.speedR_meas ^
+                     msg_.speedL_meas ^ msg_.wheelR_cnt ^ msg_.wheelL_cnt ^
+                     msg_.batVoltage ^ msg_.boardTemp ^ msg_.cmdLed);
 
-  //     if (msg.start == START_FRAME && msg.checksum == checksum) {
-  //       f.data = (double)msg.batVoltage / 100.0;
-  //       voltage_pub.publish(f);
+      if (msg_.start == START_FRAME && msg_.checksum == checksum) {
+            double f;
+        f = (double)msg_.batVoltage / 100.0;
+        
+        RCLCPP_WARN(rclcpp::get_logger("HoverboardDriver"),
+                 "bat voltage: %hu ", checksum);
+    
+        
 
-  //       f.data = (double)msg.boardTemp / 10.0;
-  //       temp_pub.publish(f);
+        // Convert RPM to RAD/S
+        // joints[0].vel.data =
+        //     direction_correction * (abs(msg.speedL_meas) * 0.10472);
+        // joints[1].vel.data =
+        //     direction_correction * (abs(msg.speedR_meas) * 0.10472);
+        // vel_pub[0].publish(joints[0].vel);
+        // vel_pub[1].publish(joints[1].vel);
 
-  //       // Convert RPM to RAD/S
-  //       joints[0].vel.data =
-  //           direction_correction * (abs(msg.speedL_meas) * 0.10472);
-  //       joints[1].vel.data =
-  //           direction_correction * (abs(msg.speedR_meas) * 0.10472);
-  //       vel_pub[0].publish(joints[0].vel);
-  //       vel_pub[1].publish(joints[1].vel);
-
-  //       // Process encoder values and update odometry
-  //       on_encoder_update(msg.wheelR_cnt, msg.wheelL_cnt);
-  //     } else {
-  //       ROS_WARN("Hoverboard checksum mismatch: %d vs %d", msg.checksum,
-  //                checksum);
-  //     }
-  //   }
-  //   prev_byte = byte;
+        // Process encoder values and update odometry
+        // on_encoder_update_(msg.wheelR_cnt, msg.wheelL_cnt);
+      // } else {
+      //   RCLCPP_WARN(rclcpp::get_logger("HoverboardDriver"),
+      //            "Writing to serial %s failed", port_name_.c_str());
+      }
+    }
+    prev_byte = byte;
 }
 
 }  // namespace robot_hardware
